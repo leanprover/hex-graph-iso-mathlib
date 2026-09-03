@@ -1,0 +1,24 @@
+name = "hex-graph-iso-mathlib"
+defaultTargets = ["HexGraphIsoMathlib"]
+
+leanOptions = [
+  { name = "doc.verso", value = true },
+  { name = "doc.verso.suggestions", value = false },
+]
+
+[[require]]
+name = "HexGraphIso"
+git = "https://github.com/leanprover/hex-graph-iso.git"
+rev = "b0438fba1fd1153349967d680e0bcfa5301c7291"
+
+[[require]]
+name = "mathlib"
+git = "https://github.com/leanprover-community/mathlib4.git"
+rev = "v4.34.0-rc2"
+
+[[lean_lib]]
+name = "HexGraphIsoMathlib"
+
+[[lean_lib]]
+name = "HexGraphIsoMathlibTests"
+globs = ["HexGraphIsoMathlib.TacticTests"]
