@@ -17,8 +17,8 @@ public section
 /-!
 # The `graph_iso` extension for `SimpleGraph` goals
 
-Importing this library extends the existing `graph_iso` syntax — no
-second tactic name — to closed ground `SimpleGraph` goals:
+Importing this library extends the existing `graph_iso` syntax (there is
+no second tactic name) to closed ground `SimpleGraph` goals:
 
 ```
 example : G ≃g H := by graph_iso
@@ -31,17 +31,15 @@ example : IsEmpty (Colored.Iso CG CH) := by graph_iso
 example : ¬ Colored.Isomorphic CG CH := by graph_iso
 ```
 
-The reifier encodes both graphs along `Fintype.equivFin` and reuses the
-Mathlib-free machinery: positive goals emit a literal transporter and
-close through the kernel-replayed `checkIso?` and the decoding
-theorems; negative goals go through the shared negative engine (which
-takes certificate replay whenever it is available and retains the
-verified pairwise decision as the exhaustion fallback) and decode through
-the `not_encode_iso` bridge theorems;
-unequal cardinalities close immediately through `Fintype.card_congr`
-obstructions, and empty vertex types through the explicit empty
-isomorphism. The same three logical limits are accepted and are not
-reinterpreted.
+Both graphs are encoded along `listEquiv`, the enumeration of the vertex
+type by a literal element list, and the Mathlib-free machinery does the
+work. A positive goal takes the witness route and decodes its `IsIso`
+proof. A negative goal takes the negative path of the Mathlib-free
+tactic, which tries the root separator and then certificate replay, and
+decodes through the `not_encode_iso` theorems. Unequal cardinalities
+close through the `Fintype.card_congr` obstructions, and empty vertex
+types through the explicit empty isomorphism. The three logical limits
+of `graph_iso` mean the same thing here as on executable goals.
 -/
 
 namespace HexGraphIsoMathlib.Tactic
@@ -55,14 +53,19 @@ private meta unsafe def evalNatUnsafe (e : Expr) : MetaM Nat :=
 @[implemented_by evalNatUnsafe]
 private meta opaque evalNatCore (e : Expr) : MetaM Nat
 
-/-- The supported goal shapes. Each carries the two graph expressions;
-`colored` marks `Colored` goals, `negative` refuting shapes, `wrap`
-whether a positive `Nonempty`/`Isomorphic` wrapper is required. -/
+/-- A supported goal, as read off the target. -/
 meta structure Shape where
+  /-- The left-hand graph. -/
   G : Expr
+  /-- The right-hand graph. -/
   H : Expr
+  /-- Whether the goal is about `Colored` graphs rather than bare
+  `SimpleGraph`s. -/
   colored : Bool
+  /-- Whether the goal refutes isomorphism. -/
   negative : Bool
+  /-- Whether a positive goal asks for the `Nonempty`/`Isomorphic`
+  wrapper around the isomorphism. -/
   wrap : Bool
   /-- For negatives: build `¬ ·` (`true`) or `IsEmpty ·` (`false`). -/
   useNot : Bool := false
@@ -97,6 +100,8 @@ meta def matchColoredIsomorphic? (t : Expr) : MetaM (Option (Expr × Expr)) := d
       return some (args[args.size - 2]!, args[args.size - 1]!)
   return none
 
+/-- The shape of the goal, or `none` when the target is not one of the
+supported shapes. -/
 meta def parseGoal? (target : Expr) : MetaM (Option Shape) := do
   let t ← whnfR target
   match_expr t with
@@ -155,12 +160,23 @@ meta def vertexType (colored : Bool) (g : Expr) : MetaM Expr := do
 
 /-- Elaboration data for one side of the goal. -/
 meta structure Side where
+  /-- The vertex type. -/
   V : Expr
+  /-- The `Fintype V` instance. -/
   instV : Expr
+  /-- The term `Fintype.card V`. -/
   cardTerm : Expr
+  /-- The value of `Fintype.card V`. -/
   card : Nat
+  /-- The enumeration `V ≃ Fin (Fintype.card V)`, a `listEquiv`
+  application on a literal element list. -/
   equiv : Expr
 
+/-- Collect the elaboration data for one side: its vertex type, the
+`Fintype` instance, the cardinality, and the enumeration equivalence
+built from the reduced `Finset.univ.val`. A vertex type with no
+`Fintype` or `DecidableEq` instance, or one whose enumeration does not
+reduce to a literal list, is reported here. -/
 meta def mkSide (colored : Bool) (g : Expr) : MetaM Side := do
   let V ← vertexType colored g
   let instV ← try
@@ -235,6 +251,8 @@ meta def encodeSide (colored : Bool) (g : Expr) (side : Side) :
           \n{ex.toMessageData}"
     return (enc, some hpos)
 
+/-- The proof term for a parsed goal. When the goal does not hold, or a
+logical limit runs out, this fails with a message saying which. -/
 meta def proveShape (cfg : Hex.GraphIso.Tactic.Config) (target : Expr)
     (shape : Shape) : MetaM Expr := do
   let sG ← mkSide shape.colored shape.G
@@ -298,31 +316,21 @@ meta def proveShape (cfg : Hex.GraphIso.Tactic.Config) (target : Expr)
     let a ← Hex.GraphIso.Tactic.evalColored encG
     let b ← Hex.GraphIso.Tactic.evalColored encH
     let (transporter?, nodes) := Hex.GraphIso.Tactic.rawFindIso a b
-    if nodes > cfg.maxNodes then
+    if nodes > cfg.maxSearchNodes then
       throwError "graph_iso: search exhausted: visited {nodes} nodes but \
-          maxNodes := {cfg.maxNodes}"
+          maxSearchNodes := {cfg.maxSearchNodes}"
     match transporter? with
     | none =>
         throwError "graph_iso: the graphs are not isomorphic; the positive \
             goal is not provable"
     | some p =>
-        if Hex.GraphIso.checkCost sG.card > cfg.maxCheckerSteps then
-          throwError "graph_iso: replay exhausted: checking the transporter \
-              takes {Hex.GraphIso.checkCost sG.card} steps but \
-              maxCheckerSteps := {cfg.maxCheckerSteps}"
-        let pE ← Hex.GraphIso.Tactic.permExpr sG.card p
-        let replayE ← mkAppM ``ReplayLimits.mk #[mkNatLit cfg.maxCheckerSteps]
-        let checkTerm ← mkAppM ``checkIso? #[replayE, encG, encH, pE]
-        let someTrue ← mkAppOptM ``Option.some
-          #[mkConst ``Bool, mkConst ``Bool.true]
-        let eqType ← mkAppM ``Eq #[checkTerm, someTrue]
-        let checked ← mkDecideProof eqType
+        let (pE, isIso) ← Hex.GraphIso.Tactic.proveIsIso cfg sG.card encG encH
+          a b p nodes
         let core ← if shape.colored then
-            mkAppM ``coloredIsoOfCheckIso?
-              #[sG.equiv, sH.equiv, replayE, pE, checked]
+            mkAppM ``coloredIsoOfIsIso #[sG.equiv, sH.equiv, pE, isIso]
           else
-            mkAppM ``isoOfCheckIso?
-              #[sG.equiv, sH.equiv, hposG.get!, hposH.get!, replayE, pE, checked]
+            mkAppM ``graphIsoOfIsIso
+              #[sG.equiv, sH.equiv, hposG.get!, hposH.get!, pE, isIso]
         let proof ← if shape.wrap then
             if shape.colored then
               mkAppM ``Colored.Isomorphic.intro #[core]
@@ -333,7 +341,7 @@ meta def proveShape (cfg : Hex.GraphIso.Tactic.Config) (target : Expr)
         return ← finish proof
 
 /-- The `graph_iso` extension for `SimpleGraph` goals. -/
-public meta def extension : Hex.GraphIso.Tactic.Extension where
+@[graph_iso_extension] public meta def extension : Hex.GraphIso.Tactic.Extension where
   prove? cfg target := do
     match ← parseGoal? target with
     | none => return none

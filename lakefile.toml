@@ -9,7 +9,7 @@ leanOptions = [
 [[require]]
 name = "HexGraphIso"
 git = "https://github.com/leanprover/hex-graph-iso.git"
-rev = "6617ecbe4a73912db8bc255624299e9761c1d935"
+rev = "7a7ec786426bc11738eefeb6cb556fbc2ad1d5bb"
 
 [[require]]
 name = "mathlib"

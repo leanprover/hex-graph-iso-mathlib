@@ -22,6 +22,8 @@ The first release supports:
 - uncoloured graphs and ordered surjective vertex colours;
 - graphs whose source and target vertex types differ;
 - positive isomorphism goals and negative non-isomorphism goals;
+- automorphism generators, vertex orbits and the group order, decoded to
+  colour-preserving self-isomorphisms;
 - closed ground terms whose finite enumeration and adjacency decisions can be
   checked by kernel reduction.
 
@@ -65,9 +67,9 @@ and renumber the used colours explicitly, or use a checked helper returning
 reorders colours because that would change the canonical labelling
 convention.
 
-For uncoloured graphs, `Colored.singleColor` returns
-`Sigma fun k => Colored V k`. It uses `k = 0` for an empty vertex type and
-`k = 1` otherwise. Its result is independent of any ordering of the vertices.
+For uncoloured graphs over a nonempty vertex type, `onecell` returns the
+one-cell `Colored V 1`. Its result is independent of any ordering of the
+vertices.
 
 ## Finite encoding
 
@@ -149,6 +151,20 @@ The library also proves:
 - equality of encoded canonical forms is independent of the chosen finite
   enumerations.
 
+The automorphism surface crosses the same encoding. `autos` decodes the
+generators the pinned search discovers into a list of `Colored.Iso G G`
+values, one per generator, each an automorphism by the Mathlib-free
+`Hex.GraphIso.autos_isIso` composed with the decoder; `sameOrbit_of_autos`
+turns two vertices sharing an orbit representative into a
+colour-preserving self-isomorphism carrying one to the other. `autOrder`
+and `autNumOrbits` report the group order and the orbit count. Those two
+are computed numbers rather than theorems, for the reason given in
+[the Mathlib-free SPEC](../../HexGraphIso/SPEC/hex-graph-iso.md#automorphism-generators):
+that the returned generators generate the whole automorphism group is
+not proved, so nothing here states that `autOrder` is the cardinality of
+the automorphism group of the `SimpleGraph`. That statement, and a tactic
+producing it, follow the generation theorem rather than preceding it.
+
 These are ordinary theorems, not classical choice definitions hidden behind
 an executable-looking name. The compiled algorithm remains the one in
 `hex-graph-iso`.
@@ -196,9 +212,9 @@ accepted:
 
 ```lean
 graph_iso
-  (maxNodes := 200000)
-  (maxCertNodes := 200000)
-  (maxCheckerSteps := 10000000)
+  (maxSearchNodes := 200000)
+  (maxCertRecords := 200000)
+  (maxKernelSteps := 10000000)
 ```
 
 The default values remain `100000`, `100000`, and `5000000`. The Mathlib
@@ -249,9 +265,12 @@ For equal vertex cardinalities, the tactic:
 
 1. reifies the two graphs and proves the two adjacency correspondences;
 2. reifies and proves colour correspondences when colours are present;
-3. runs the compiled, bounded `findIso?` search;
-4. checks the returned literal permutation with the Mathlib-free, bounded
-   `checkIso?`;
+3. runs the compiled `findIso` search under `maxSearchNodes`;
+4. hands the returned literal permutation to the same witness route the
+   Mathlib-free tactic uses, which ties each side's adjacency, colouring
+   and the permutation to list literals and closes through
+   `Kernel.checkIso` and `Kernel.isIso_of_checkIso` under
+   `maxKernelSteps`;
 5. conjugates the permutation by the two finite enumerations;
 6. constructs an explicit `SimpleGraph.Iso` or `Colored.Iso`;
 7. wraps it in `Nonempty` when required.
@@ -274,11 +293,10 @@ Otherwise the tactic:
 
 1. reifies both inputs with kernel-checked correspondence proofs;
 2. obtains executable non-isomorphism of the encodings from the shared
-   Mathlib-free negative engine, which takes the certificate route whenever
-   it is available and retains the verified pairwise decision as the
-   exhaustion fallback (per the core SPEC's tactic section);
-3. transports that result through the `not_encode_iso` bridge
-   theorems;
+   Mathlib-free negative routes, the root separator and then certificate
+   replay, described in
+   [hex-graph-iso.md § The Mathlib-free graph_iso tactic](../../HexGraphIso/SPEC/hex-graph-iso.md#the-mathlib-free-graph_iso-tactic);
+3. transports that result through the `not_encode_iso` theorems;
 4. constructs `IsEmpty` or the requested negated `Nonempty`
    proposition.
 
@@ -297,7 +315,7 @@ Reification charges every enumerated vertex, vertex pair, and colour
 application against an additional elaborator-side size report. These counts
 are displayed on failure but do not replace the three checker limits. The
 literal term is rejected before emission if its certificate record count
-exceeds `maxCertNodes`.
+exceeds `maxCertRecords`.
 
 The library never uses `native_decide`. It introduces no axiom and has no
 fallback to an external graph program.
